@@ -1,0 +1,8 @@
+# Discord library (2.4+ required for native Poll support)
+discord.py>=2.4.0
+
+# Async SQLite
+aiosqlite>=0.19.0
+
+# Unified diff parsing (patch validation)
+unidiff>=0.7.5

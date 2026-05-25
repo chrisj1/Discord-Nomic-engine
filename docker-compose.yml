@@ -1,0 +1,20 @@
+services:
+  nomic:
+    build: .
+    env_file: .env
+    volumes:
+      # Bind-mount your local nomic-rules clone so the bot can read/patch rules.py.
+      # Override RULES_PATH in .env if the repos aren't side-by-side.
+      - ${RULES_REPO_PATH:-../nomic-rules}:/app/rules:rw
+      # Persistent volume for the SQLite database.
+      - nomic-data:/app/data
+    restart: unless-stopped
+    # Drop all Linux capabilities; the bot needs none of them.
+    cap_drop:
+      - ALL
+    # Prevent privilege escalation inside the container.
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  nomic-data:
