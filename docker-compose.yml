@@ -4,15 +4,39 @@ services:
     env_file: .env
     volumes:
       # Bind-mount your local nomic-rules clone so the bot can read/patch rules.py.
-      # Override RULES_PATH in .env if the repos aren't side-by-side.
+      # Override RULES_REPO_PATH in .env if the repos aren't side-by-side.
       - ${RULES_REPO_PATH:-../nomic-rules}:/app/rules:rw
       # Persistent volume for the SQLite database.
       - nomic-data:/app/data
     restart: unless-stopped
-    # Drop all Linux capabilities; the bot needs none of them.
     cap_drop:
       - ALL
-    # Prevent privilege escalation inside the container.
+    security_opt:
+      - no-new-privileges:true
+
+  # Read-only git server that exposes the live rules.py repo.
+  # Players can `git clone git://<your-nas-host>:9418/nomic-rules` and
+  # `git pull` to always have the current rules to diff against.
+  rules-git:
+    image: alpine/git:latest
+    entrypoint: ["git"]
+    command:
+      - daemon
+      - --reuseaddr
+      - --base-path=/srv/git
+      - --export-all
+      - --port=9418
+      - --listen=0.0.0.0
+      - --informative-errors
+      - --verbose
+    volumes:
+      # Same bind-mount as the bot, read-only — daemon never writes.
+      - ${RULES_REPO_PATH:-../nomic-rules}:/srv/git/nomic-rules:ro
+    ports:
+      - "9418:9418"
+    restart: unless-stopped
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
 

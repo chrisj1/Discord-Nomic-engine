@@ -283,20 +283,18 @@ class GameCog(commands.Cog):
         embed.add_field(
             name="📝 Making a patch",
             value=(
-                "Easiest with git:\n"
+                "The bot hosts a live git server. Clone once, then "
+                "`git pull` before each new patch to get the current rules:\n"
                 "```sh\n"
-                "git clone <nomic-rules>  # or use /rules to grab the file\n"
-                "$EDITOR rules.py         # make your change\n"
-                "git diff > my.patch      # don't commit — just diff\n"
-                "```\n"
-                "Without git:\n"
-                "```sh\n"
-                "cp rules.py rules.py.orig\n"
+                "git clone git://<bot-host>:9418/nomic-rules\n"
+                "cd nomic-rules && git pull\n"
                 "$EDITOR rules.py\n"
-                "diff -u rules.py.orig rules.py > my.patch\n"
+                "git diff > my.patch\n"
+                "git checkout rules.py    # reset for next time\n"
                 "```\n"
-                "Test it locally: `patch -p1 < my.patch` in a fresh copy. "
-                "If it applies cleanly there, it'll apply on the bot."
+                "No git access? Use `/rules` to download the file, "
+                "edit it, then `diff -u rules.py.orig rules.py > my.patch`.\n"
+                "Test locally: `patch -p1 < my.patch` in a fresh copy."
             ),
             inline=False,
         )
