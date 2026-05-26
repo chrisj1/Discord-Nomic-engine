@@ -4,7 +4,10 @@
 /withdraw  — withdraw your open proposal
 /proposals — list proposals in the current game
 /proposal  — view a single proposal
-/tally     — proposer (or admin) closes their own poll early
+/tally     — proposer (or admin) closes a poll early
+
+Polls also auto-close (via on_raw_poll_vote_add) as soon as every eligible
+voter has cast a vote, so games don't have to wait out the full timer.
 """
 
 import asyncio
@@ -93,6 +96,57 @@ class ProposalsCog(commands.Cog):
     @poll_checker.before_loop
     async def before_poll_checker(self) -> None:
         await self.bot.wait_until_ready()
+
+    # ── Auto-close when everyone has voted ─────────────────────────────────────
+
+    @commands.Cog.listener()
+    async def on_raw_poll_vote_add(self, payload: discord.RawPollVoteActionEvent) -> None:
+        """If the new vote brings us to "every eligible voter has voted",
+        tally immediately rather than waiting for the 48h expiry. _tally is
+        idempotent so a race with /tally or the expiry loop is harmless.
+        """
+        try:
+            row = await self.bot.db.get_proposal_by_poll_message(str(payload.message_id))
+            if row is None or row["status"] != "pending":
+                return
+
+            channel = self.bot.get_channel(payload.channel_id) or await self.bot.fetch_channel(payload.channel_id)
+            try:
+                message = await channel.fetch_message(payload.message_id)
+            except discord.NotFound:
+                return
+            if message.poll is None:
+                return
+
+            players = await self.bot.db.get_game_players(row["game_id"])
+            rules = self.bot.rules
+            proposer_id = row["proposer_id"]
+
+            def eligible(pid: str) -> bool:
+                weight = engine.call_rule(
+                    rules, "can_vote",
+                    pid, proposer_id, players,
+                    default=(1 if pid != proposer_id else 0),
+                )
+                try:
+                    return int(weight) > 0
+                except (TypeError, ValueError):
+                    return False
+
+            eligible_ids = {str(p["discord_id"]) for p in players if eligible(str(p["discord_id"]))}
+            if not eligible_ids:
+                return  # nobody can vote; let the expiry loop handle it
+
+            voted_ids: set[str] = set()
+            for answer in message.poll.answers:
+                async for voter in answer.voters():
+                    voted_ids.add(str(voter.id))
+
+            if eligible_ids.issubset(voted_ids):
+                log.info("All eligible voters have voted on proposal #%d; tallying early", row["id"])
+                await self._tally(row)
+        except Exception:
+            log.exception("Error in on_raw_poll_vote_add handler")
 
     # ── Core tally / turn advance ──────────────────────────────────────────────
 

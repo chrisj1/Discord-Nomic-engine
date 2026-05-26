@@ -313,11 +313,12 @@ class GameCog(commands.Cog):
         embed.add_field(
             name="4️⃣ Resolution",
             value=(
-                "When the poll closes (or the proposer runs `/tally` early), the engine "
-                "tallies votes, applies the patch if it passed, awards points, and "
-                "advances the turn. The result message shows point changes "
-                "(`<@you> +10 → 35`) and a separate message announces the next player. "
-                "Failed proposals still cost your turn."
+                "The poll closes when **every eligible voter has voted**, when the "
+                f"**{duration}h** timer expires, or when the **proposer or an admin** "
+                "runs `/tally`. At that point the engine tallies votes, applies the "
+                "patch if it passed, awards points, and advances the turn. The result "
+                "message shows point changes (`<@you> +10 → 35`) and a separate message "
+                "announces the next player. Failed proposals still cost your turn."
             ),
             inline=False,
         )

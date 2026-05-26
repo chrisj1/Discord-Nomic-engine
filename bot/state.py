@@ -265,6 +265,12 @@ class Database:
         ) as cur:
             return await cur.fetchone()
 
+    async def get_proposal_by_poll_message(self, message_id: str) -> aiosqlite.Row | None:
+        async with self._db.execute(
+            "SELECT * FROM proposals WHERE poll_message_id=?", (str(message_id),)
+        ) as cur:
+            return await cur.fetchone()
+
     async def get_pending_in_game(self, game_id: int) -> list[aiosqlite.Row]:
         async with self._db.execute(
             "SELECT * FROM proposals WHERE game_id=? AND status='pending'",
