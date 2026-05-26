@@ -189,6 +189,16 @@ class ProposalsCog(commands.Cog):
         points_dict: dict | None = None,
         players_after: list[dict] | None = None,
     ) -> None:
+        """Post the verdict line for a resolved proposal.
+
+        Format: "**Kind #N** — verdict — note — points: <@id> +D → total".
+
+        `points_dict` is the raw {discord_id: delta} returned by award_points.
+        `players_after` is the post-award roster snapshot; if supplied we
+        render each entry's new total alongside its delta. Zero-deltas are
+        skipped so failed-with-no-penalty proposals don't get a trailing
+        "points:" line.
+        """
         rules = self.bot.rules
         kind = "⚡ Transmutation" if row["is_transmutation"] else "Proposal"
         if status == "passed":
@@ -243,7 +253,13 @@ class ProposalsCog(commands.Cog):
     async def _advance_after_resolution(
         self, game_id: int, proposer_id: str, players: list[dict], channel=None
     ) -> None:
-        # safe_next_player validates the rule's return value against the roster
+        """Compute the next player (via the mutable rules.next_player, sanity-
+        checked by engine.safe_next_player), persist them as the new current
+        turn, and — if a channel is supplied — post "🎯 Next turn: <@id>".
+
+        Called after every tally and after /withdraw when
+        rules.advance_turn_on_withdraw() is True.
+        """
         next_id = engine.safe_next_player(self.bot.rules, proposer_id, players)
         if not next_id:
             return

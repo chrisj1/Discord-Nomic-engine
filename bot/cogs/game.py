@@ -302,9 +302,11 @@ class GameCog(commands.Cog):
             name="3️⃣ Voting",
             value=(
                 f"A Discord poll opens for **{duration}h**. Players vote ✅ Yes or ❌ No "
-                f"using the native poll. The proposer cannot vote on their own proposal. "
-                f"A proposal passes with **≥{int(threshold*100)}% YES** and at least "
-                f"**{quorum} total votes** (scales with the roster)."
+                f"using the native poll. By default the proposer cannot vote on their "
+                f"own proposal. A proposal passes with **≥{int(threshold*100)}% YES** "
+                f"and at least **{quorum} total votes** (scales with the roster). "
+                f"Vote weights are configurable via `can_vote` — the game can vote in "
+                f"weighted or random-weight voting."
             ),
             inline=False,
         )
@@ -313,8 +315,9 @@ class GameCog(commands.Cog):
             value=(
                 "When the poll closes (or the proposer runs `/tally` early), the engine "
                 "tallies votes, applies the patch if it passed, awards points, and "
-                "advances the turn to the next player. Failed proposals still cost your "
-                "turn."
+                "advances the turn. The result message shows point changes "
+                "(`<@you> +10 → 35`) and a separate message announces the next player. "
+                "Failed proposals still cost your turn."
             ),
             inline=False,
         )
@@ -334,6 +337,18 @@ class GameCog(commands.Cog):
             value=(
                 "Spotted a bug in your patch? `/amend` replaces it (resets votes, "
                 "uses remaining time). Want to bail entirely? `/withdraw`."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="🧪 Custom validity rules",
+            value=(
+                "Beyond the engine's safety/immutability checks, the game can vote "
+                "in arbitrary patch-validity rules via the mutable "
+                "`is_valid_patch(patch, description, proposer, players)` callback in "
+                "`rules.py`. Examples players have used: max line count, MD5 "
+                "proof-of-work (\"hash must end in 0\"), required description tags. "
+                "Rejected patches come back with the rule's error message."
             ),
             inline=False,
         )
