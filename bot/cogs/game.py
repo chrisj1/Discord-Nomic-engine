@@ -286,7 +286,7 @@ class GameCog(commands.Cog):
                 "The bot hosts a live git server. Clone once, then "
                 "`git pull` before each new patch to get the current rules:\n"
                 "```sh\n"
-                "git clone git://<bot-host>:9418/nomic-rules\n"
+                "git clone https://nomic.chrisjerrett.com/nomic-rules\n"
                 "cd nomic-rules && git pull\n"
                 "$EDITOR rules.py\n"
                 "git diff > my.patch\n"
