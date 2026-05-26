@@ -338,18 +338,24 @@ class ProposalsCog(commands.Cog):
                 f"requires unanimous YES from all non-proposer players."
             )
 
-        # Attach raw patch + would-be rules.py so voters can review/apply locally
-        attachments = _proposal_files(proposal_id, patch_text, new_content)
-
         message = await interaction.followup.send(
             f"{kind} **#{proposal_id}:** {description}\n"
             f"*By {proposer_name} · poll open for {poll_hours}h*{transmute_note}",
             poll=poll,
-            files=attachments,
         )
         await self.bot.db.set_proposal_poll(
             proposal_id, str(message.id), str(interaction.channel_id)
         )
+
+        # Discord rejects polls + attachments in the same message, so send
+        # the raw patch and would-be rules.py as a follow-up.
+        try:
+            await interaction.followup.send(
+                f"📎 Files for **#{proposal_id}** — review before voting:",
+                files=_proposal_files(proposal_id, patch_text, new_content),
+            )
+        except Exception:
+            log.exception("Failed to attach files for proposal #%d", proposal_id)
 
     # ── /amend ─────────────────────────────────────────────────────────────────
 
@@ -459,14 +465,19 @@ class ProposalsCog(commands.Cog):
             elif was_transmute and not transmutations:
                 kind_change = " (no longer a transmutation)"
 
-            attachments = _proposal_files(proposal_id, patch_text, new_content)
             new_msg = await channel.send(
                 f"✏️ **Proposal #{proposal_id} amended**{kind_change}\n"
                 f"*New summary:* {description}\n"
                 f"*Previous votes have been reset. Poll runs for {remaining_h}h.*",
                 poll=poll,
-                files=attachments,
             )
+            try:
+                await channel.send(
+                    f"📎 Files for **#{proposal_id}** (updated) — review before voting:",
+                    files=_proposal_files(proposal_id, patch_text, new_content),
+                )
+            except Exception:
+                log.exception("Failed to attach files for amended proposal #%d", proposal_id)
 
             await self.bot.db.update_proposal_patch(
                 proposal_id, description, patch_text, transmuted_names=transmutations
