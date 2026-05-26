@@ -11,6 +11,12 @@ services:
     restart: unless-stopped
     cap_drop:
       - ALL
+    # The container runs as root but the bind-mounted rules.py is owned by
+    # the host user (uid 1000). Without DAC_OVERRIDE, root gets treated as
+    # "other" and can only read — writes (and the git commit on accepted
+    # proposals) fail with EACCES.
+    cap_add:
+      - DAC_OVERRIDE
     security_opt:
       - no-new-privileges:true
 
