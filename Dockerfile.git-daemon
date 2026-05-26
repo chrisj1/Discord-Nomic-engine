@@ -2,7 +2,11 @@ FROM alpine:3.20
 
 # git provides the `git` binary; git-daemon provides the daemon backend
 # that `git daemon` invokes.
-RUN apk add --no-cache git git-daemon
+RUN apk add --no-cache git git-daemon \
+    # Trust any repo the daemon serves — the bind-mount comes from a
+    # different UID on the host, which git would otherwise reject as
+    # "dubious ownership". Safe here because the daemon is read-only.
+    && git config --system --add safe.directory '*'
 
 ENTRYPOINT ["git"]
 CMD ["daemon", "--help"]

@@ -4,7 +4,11 @@ FROM python:3.12-slim
 # git:   commit accepted rule changes to the rules repo
 RUN apt-get update \
     && apt-get install -y --no-install-recommends patch git \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # The rules.py bind-mount comes from a different UID on the host;
+    # git would otherwise refuse with "dubious ownership" when committing
+    # accepted proposals.
+    && git config --system --add safe.directory '*'
 
 WORKDIR /app
 
