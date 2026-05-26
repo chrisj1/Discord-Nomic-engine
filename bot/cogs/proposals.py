@@ -151,6 +151,9 @@ class ProposalsCog(commands.Cog):
                 if isinstance(delta, int) and delta != 0:
                     await self.bot.db.award_points_in_game(game_id, str(pid), delta)
 
+        # Re-fetch once for both the resolution message and the winner check
+        players_after = await self.bot.db.get_game_players(game_id)
+
         # Apply patch if it passed
         patch_note = ""
         if passed:
@@ -161,10 +164,11 @@ class ProposalsCog(commands.Cog):
             else:
                 patch_note = f"patch failed to apply: {err}"
 
-        await self._post_resolution(channel, row, status, yes, no, players, patch_note)
-
-        # Check winner
-        players_after = await self.bot.db.get_game_players(game_id)
+        await self._post_resolution(
+            channel, row, status, yes, no, players, patch_note,
+            points_dict if isinstance(points_dict, dict) else None,
+            players_after,
+        )
         winner_id = engine.call_rule(self.bot.rules, "check_winner", players_after, default=None)
         if winner_id:
             await self.bot.db.finish_game(game_id, str(winner_id))
@@ -181,7 +185,9 @@ class ProposalsCog(commands.Cog):
         return status
 
     async def _post_resolution(
-        self, channel, row, status, yes, no, players, note: str
+        self, channel, row, status, yes, no, players, note: str,
+        points_dict: dict | None = None,
+        players_after: list[dict] | None = None,
     ) -> None:
         rules = self.bot.rules
         kind = "⚡ Transmutation" if row["is_transmutation"] else "Proposal"
@@ -212,8 +218,27 @@ class ProposalsCog(commands.Cog):
                     verdict = f"❌ **Failed** ({yes}✅ {no}❌)"
         else:
             verdict = f"↩️ **{status.title()}**"
-        suffix = f" — {note}" if note else ""
-        await channel.send(f"**{kind} #{row['id']}** — {verdict}{suffix}")
+
+        parts = [f"**{kind} #{row['id']}** — {verdict}"]
+        if note:
+            parts.append(note)
+
+        if points_dict:
+            totals = {p["discord_id"]: p["points"] for p in (players_after or [])}
+            entries = []
+            for pid, delta in points_dict.items():
+                if not isinstance(delta, int) or delta == 0:
+                    continue
+                sign = "+" if delta > 0 else ""
+                new_total = totals.get(str(pid))
+                if new_total is not None:
+                    entries.append(f"<@{pid}> {sign}{delta} → **{new_total}**")
+                else:
+                    entries.append(f"<@{pid}> {sign}{delta}")
+            if entries:
+                parts.append("points: " + ", ".join(entries))
+
+        await channel.send(" — ".join(parts))
 
     async def _advance_after_resolution(
         self, game_id: int, proposer_id: str, players: list[dict], channel=None
