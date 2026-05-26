@@ -7,7 +7,7 @@ RUN apk add --no-cache git nginx fcgiwrap \
     # git won't reject the working tree as "dubious ownership". Read-only
     # mount means this can't be abused to write.
     && git config --system --add safe.directory '*' \
-    && mkdir -p /run/nginx /run/fcgiwrap
+    && mkdir -p /run/nginx
 
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY start.sh /start.sh
