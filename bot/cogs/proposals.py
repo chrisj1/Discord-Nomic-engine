@@ -171,7 +171,9 @@ class ProposalsCog(commands.Cog):
             await channel.send(f"🏆 **Game Over!** <@{winner_id}> ({winner_name}) wins!")
             return status
 
-        await self._advance_after_resolution(game_id, row["proposer_id"], players_after)
+        await self._advance_after_resolution(
+            game_id, row["proposer_id"], players_after, channel=channel,
+        )
         return status
 
     async def _post_resolution(
@@ -210,12 +212,22 @@ class ProposalsCog(commands.Cog):
         await channel.send(f"**{kind} #{row['id']}** — {verdict}{suffix}")
 
     async def _advance_after_resolution(
-        self, game_id: int, proposer_id: str, players: list[dict]
+        self, game_id: int, proposer_id: str, players: list[dict], channel=None
     ) -> None:
         # safe_next_player validates the rule's return value against the roster
         next_id = engine.safe_next_player(self.bot.rules, proposer_id, players)
-        if next_id:
-            await self.bot.db.set_current_turn(game_id, str(next_id))
+        if not next_id:
+            return
+        await self.bot.db.set_current_turn(game_id, str(next_id))
+        if channel is not None:
+            next_name = next(
+                (p["name"] for p in players if p["discord_id"] == next_id),
+                next_id,
+            )
+            try:
+                await channel.send(f"🎯 Next turn: <@{next_id}> ({next_name})")
+            except Exception:
+                log.exception("Failed to announce next turn")
 
     # ── /propose ───────────────────────────────────────────────────────────────
 
@@ -547,7 +559,9 @@ class ProposalsCog(commands.Cog):
         advance = engine.call_rule(rules, "advance_turn_on_withdraw", default=False)
         if advance:
             players = await self.bot.db.get_game_players(row["game_id"])
-            await self._advance_after_resolution(row["game_id"], row["proposer_id"], players)
+            await self._advance_after_resolution(
+                row["game_id"], row["proposer_id"], players, channel=channel,
+            )
 
         await interaction.followup.send(f"Proposal #{proposal_id} withdrawn.", ephemeral=True)
 

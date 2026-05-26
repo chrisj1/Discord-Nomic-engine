@@ -24,7 +24,9 @@ _FORBIDDEN_MODULES = frozenset({
     "pickle", "marshal", "shelve", "dbm", "sqlite3", "importlib",
     "builtins", "ctypes", "threading", "multiprocessing", "concurrent",
     "asyncio", "signal", "mmap", "select", "selectors", "ssl",
-    "hashlib", "hmac", "secrets", "tempfile", "fnmatch", "linecache",
+    # hashlib / hmac removed: pure computation, useful for rules that want
+    # deterministic checksums (e.g. proof-of-work-style patch constraints).
+    "secrets", "tempfile", "fnmatch", "linecache",
     "tokenize", "compileall", "py_compile", "zipfile", "tarfile",
     "gzip", "bz2", "lzma", "zlib", "struct", "codecs", "ftplib",
     "smtplib", "telnetlib", "xmlrpc", "email", "html", "xml",
