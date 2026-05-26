@@ -31,7 +31,7 @@ services:
       # Same bind-mount as the bot, read-only — git-http-backend never writes.
       - ${RULES_REPO_PATH:-../nomic-rules}:/srv/git/nomic-rules:ro
     ports:
-      - "8418:80"
+      - "8418:8080"
     restart: unless-stopped
     cap_drop:
       - ALL
