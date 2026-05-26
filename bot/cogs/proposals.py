@@ -35,8 +35,8 @@ async def _get_vote_counts(
     players: list[dict],
 ) -> tuple[int, int]:
     """
-    Return (yes_votes, no_votes). Filters voters through rules.can_vote
-    so the proposer (and non-roster votes) can be excluded per the rules.
+    Return (yes_votes, no_votes). can_vote's return is interpreted as a vote
+    weight: True/1 = one vote, False/0 = excluded, larger ints = weighted votes.
     """
     if not poll.answers:
         return 0, 0
@@ -47,14 +47,18 @@ async def _get_vote_counts(
     async def count(answer) -> int:
         n = 0
         async for voter in answer.voters():
-            allowed = engine.call_rule(
+            weight = engine.call_rule(
                 rules, "can_vote",
                 str(voter.id), proposer_id, players,
-                default=(str(voter.id) != proposer_id
-                         and any(p["discord_id"] == str(voter.id) for p in players)),
+                default=(1 if (str(voter.id) != proposer_id
+                               and any(p["discord_id"] == str(voter.id) for p in players))
+                         else 0),
             )
-            if allowed:
-                n += 1
+            # bool is a subclass of int — True/False coerce to 1/0 naturally.
+            try:
+                n += max(0, int(weight))
+            except (TypeError, ValueError):
+                pass  # invalid return — drop the vote rather than crash
         return n
 
     yes = await count(yes_answer)
