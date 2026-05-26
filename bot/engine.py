@@ -445,7 +445,8 @@ def call_rule(rules: types.ModuleType, func_name: str, *args, default=None):
 # These are TRULY immutable — they live in engine code, not rules.py, so no
 # proposal can ever weaken them. Mutable rules can only make things stricter.
 
-ENGINE_QUORUM_FLOOR = 2
+ENGINE_QUORUM_FLOOR = 1  # lowered from 2 so 2-player games (where proposer
+                         # can't vote) can still pass on a single YES
 ENGINE_THRESHOLD_FLOOR = 0.5  # YES fraction (of valid votes) required
 
 
