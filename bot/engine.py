@@ -8,6 +8,7 @@ import ast
 import importlib.util
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import types
@@ -35,8 +36,28 @@ _FORBIDDEN_MODULES = frozenset({
 })
 
 _FORBIDDEN_BUILTINS = frozenset({
+    # Code execution
     "open", "exec", "eval", "compile", "__import__", "breakpoint",
-    "input", "print",  # print is fine in dev but noisy in prod; can be removed via patch
+    "input", "print",
+    # Introspection / sandbox-escape vectors
+    "getattr", "setattr", "delattr", "hasattr",
+    "vars", "dir", "globals", "locals", "help",
+    # Type construction (can be used to build new types with hidden behavior)
+    "type", "object",
+    # Bypassing __subclasses__ / metaclass tricks
+    "super", "classmethod", "staticmethod",
+})
+
+# Attribute access to these names is forbidden — they're the primary tools used
+# to escape AST-based sandboxes (walking the class hierarchy, reaching builtins,
+# etc.). Blocking dunder access wholesale catches both known and future tricks.
+_FORBIDDEN_ATTRS = frozenset({
+    "__class__", "__bases__", "__mro__", "__subclasses__", "__base__",
+    "__globals__", "__builtins__", "__import__", "__loader__", "__spec__",
+    "__code__", "__func__", "__self__", "__closure__", "__dict__",
+    "__module__", "__qualname__", "__getattribute__", "__getattr__",
+    "__setattr__", "__delattr__", "__init_subclass__", "__class_getitem__",
+    "__reduce__", "__reduce_ex__", "__sizeof__",
 })
 
 
@@ -69,7 +90,183 @@ def check_ast_safety(code: str) -> list[str]:
             if isinstance(node.func, ast.Name) and node.func.id in _FORBIDDEN_BUILTINS:
                 violations.append(f"Forbidden call: {node.func.id}()")
 
+        elif isinstance(node, ast.Attribute):
+            # Catches both reads (x.__class__) and the LHS of writes
+            if node.attr in _FORBIDDEN_ATTRS:
+                violations.append(f"Forbidden attribute access: .{node.attr}")
+            # Catch any other dunder we didn't list explicitly
+            elif node.attr.startswith("__") and node.attr.endswith("__"):
+                violations.append(f"Forbidden dunder attribute access: .{node.attr}")
+
+        elif isinstance(node, ast.Name):
+            # Catch references to forbidden names even outside calls
+            if node.id in {"__builtins__", "__import__"}:
+                violations.append(f"Forbidden name reference: {node.id}")
+
     return violations
+
+
+# ── Immutability tags ─────────────────────────────────────────────────────────
+#
+# rules.py items can be tagged with:
+#   QUORUM = 3  # #immutable          ← inline comment on the same line
+#   PASSING_THRESHOLD = 0.5  # #immutable
+#
+#   # #immutable                       ← standalone comment on the line before
+#   def tally_vote(...):
+#
+# Rules:
+#   • #immutable content cannot be modified
+#   • #immutable tags cannot be removed or downgraded to #mutable
+#   • #mutable tags CAN be upgraded to #immutable (ratchet: protect but never unprotect)
+#   • Untagged items are freely patchable
+
+_INLINE_TAG_RE = re.compile(r'#\s*#(immutable|mutable)\b')
+_STANDALONE_TAG_RE = re.compile(r'^\s*#\s*#(immutable|mutable)\b\s*$')
+_DEF_RE = re.compile(r'^(async\s+)?def\s+(\w+)')
+_CLASS_RE = re.compile(r'^class\s+(\w+)')
+_ASSIGN_RE = re.compile(r'^(\w+)\s*(?::[^=]+)?\s*=(?!=)')  # name = ... but not ==
+
+
+def extract_tagged_names(source: str) -> dict[str, str]:
+    """
+    Parse rules.py source and return {name: 'immutable'|'mutable'}
+    for every tagged top-level definition or assignment.
+
+    Supports two tag placements:
+      1. Standalone comment on the line immediately before a def/class/assignment:
+             # #immutable
+             def tally_vote(...):
+      2. Inline comment on the same line:
+             QUORUM = 3  # #immutable
+    """
+    tags: dict[str, str] = {}
+    lines = source.splitlines()
+    pending_tag: str | None = None
+
+    for line in lines:
+        # Standalone tag line — remember it for the next definition
+        m = _STANDALONE_TAG_RE.match(line)
+        if m:
+            pending_tag = m.group(1)
+            continue
+
+        # Try to identify what is being defined on this line
+        stripped = line.lstrip()
+        name: str | None = None
+
+        def_m = _DEF_RE.match(stripped)
+        class_m = _CLASS_RE.match(stripped)
+        assign_m = _ASSIGN_RE.match(line)  # assignments must start at column 0
+
+        if def_m:
+            name = def_m.group(2)
+        elif class_m:
+            name = class_m.group(1)
+        elif assign_m and not stripped.startswith(("#", " ", "\t")):
+            name = assign_m.group(1)
+
+        if name:
+            inline = _INLINE_TAG_RE.search(line)
+            tag = inline.group(1) if inline else pending_tag
+            if tag:
+                tags[name] = tag
+
+        # Pending tag only ever applies to the line immediately following it
+        pending_tag = None
+
+    return tags
+
+
+def extract_definition_ast(source: str) -> dict[str, str]:
+    """
+    Return {name: normalised_ast_repr} for every top-level definition.
+    Uses ast.unparse so whitespace and comment differences are ignored —
+    only semantic content changes matter.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}
+
+    result: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            result[node.name] = ast.unparse(node)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    result[target.id] = ast.unparse(node.value)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.value:
+                result[node.target.id] = ast.unparse(node.value)
+
+    return result
+
+
+def check_immutable_violations(original: str, patched: str) -> list[str]:
+    """
+    Compare original and patched rules.py for BLOCKING immutability violations.
+    Returns a list of human-readable violation strings (empty = no blocker).
+
+    Blocking violations:
+      - An #immutable item's content was changed (transmute first, then amend)
+      - An #immutable tag was removed entirely (must be an explicit downgrade)
+      - A patch both transmutes and modifies the same item (split into two)
+
+    NOT blocking (allowed as a "transmutation" — see extract_transmutations):
+      - An #immutable tag was downgraded to #mutable, with content unchanged
+    """
+    violations: list[str] = []
+
+    orig_tags = extract_tagged_names(original)
+    patched_tags = extract_tagged_names(patched)
+    orig_defs = extract_definition_ast(original)
+    patched_defs = extract_definition_ast(patched)
+
+    for name, tag in orig_tags.items():
+        if tag != "immutable":
+            continue
+
+        new_tag = patched_tags.get(name)
+
+        if new_tag is None:
+            violations.append(
+                f"`{name}` is #immutable — tag cannot be silently removed "
+                "(explicitly downgrade to #mutable to transmute)"
+            )
+            continue
+
+        orig_body = orig_defs.get(name)
+        patched_body = patched_defs.get(name)
+        content_changed = orig_body is not None and orig_body != patched_body
+
+        if new_tag == "mutable":
+            # Transmutation — allowed, but must not change content in the same patch
+            if content_changed:
+                violations.append(
+                    f"`{name}` is #immutable — cannot transmute and modify in the same patch "
+                    "(submit transmutation first, then a follow-up amendment)"
+                )
+            continue
+
+        # Still immutable — content must match
+        if content_changed:
+            violations.append(
+                f"`{name}` is #immutable — content cannot be modified (transmute first)"
+            )
+
+    return violations
+
+
+def extract_transmutations(original: str, patched: str) -> list[str]:
+    """Return names of items being transmuted (#immutable -> #mutable) in this patch."""
+    orig_tags = extract_tagged_names(original)
+    patched_tags = extract_tagged_names(patched)
+    return [
+        name for name, tag in orig_tags.items()
+        if tag == "immutable" and patched_tags.get(name) == "mutable"
+    ]
 
 
 # ── Patch validation ──────────────────────────────────────────────────────────
@@ -124,39 +321,54 @@ def _apply_patch_to_content(patch_text: str, current_content: str) -> tuple[bool
         return False, "", result.stderr.strip()
 
 
-def validate_patch(patch_text: str, rules_path: Path) -> tuple[bool, str, str | None]:
+def validate_patch(
+    patch_text: str, rules_path: Path
+) -> tuple[bool, str, str | None, list[str]]:
     """
     Full validation pipeline.
 
     Returns:
-        (True, "", new_rules_content)   — patch is safe and applies cleanly
-        (False, error_message, None)    — patch is rejected
+        (True, "", new_rules_content, transmutations)  — patch is safe and applies
+        (False, error_message, None, [])               — patch is rejected
+
+    `transmutations` is the list of item names being downgraded from #immutable
+    to #mutable. A non-empty list means the proposal is a transmutation and
+    must clear the transmutation threshold to pass.
     """
     if not patch_text.strip():
-        return False, "Patch is empty.", None
+        return False, "Patch is empty.", None, []
 
     # 1. Check which files the patch touches
     targets = _parse_patch_targets(patch_text)
     if not targets:
-        return False, "Could not detect target files in patch.", None
+        return False, "Could not detect target files in patch.", None, []
 
     bad = [t for t in targets if t != "rules.py"]
     if bad:
-        return False, f"Patch touches forbidden file(s): {', '.join(bad)}", None
+        return False, f"Patch touches forbidden file(s): {', '.join(bad)}", None, []
 
     # 2. Apply to a temp copy
     current = rules_path.read_text(encoding="utf-8")
     ok, new_content, err = _apply_patch_to_content(patch_text, current)
     if not ok:
-        return False, f"Patch does not apply cleanly:\n{err}", None
+        return False, f"Patch does not apply cleanly:\n{err}", None, []
 
     # 3. AST safety check
     violations = check_ast_safety(new_content)
     if violations:
         bullet = "\n".join(f"• {v}" for v in violations)
-        return False, f"Safety violations in patched rules.py:\n{bullet}", None
+        return False, f"Safety violations in patched rules.py:\n{bullet}", None, []
 
-    return True, "", new_content
+    # 4. Immutability check (blocking only — transmutations are allowed)
+    immutable_violations = check_immutable_violations(current, new_content)
+    if immutable_violations:
+        bullet = "\n".join(f"• {v}" for v in immutable_violations)
+        return False, f"Immutability violations:\n{bullet}", None, []
+
+    # 5. Detect transmutations (allowed, but flagged for stricter tally)
+    transmutations = extract_transmutations(current, new_content)
+
+    return True, "", new_content, transmutations
 
 
 # ── Patch application ─────────────────────────────────────────────────────────
@@ -226,3 +438,78 @@ def call_rule(rules: types.ModuleType, func_name: str, *args, default=None):
     except Exception as exc:
         log.error("rules.%s(%s) raised: %s", func_name, args, exc)
         return default() if callable(default) else default
+
+
+# ── Engine-enforced floors ────────────────────────────────────────────────────
+#
+# These are TRULY immutable — they live in engine code, not rules.py, so no
+# proposal can ever weaken them. Mutable rules can only make things stricter.
+
+ENGINE_QUORUM_FLOOR = 2
+ENGINE_THRESHOLD_FLOOR = 0.5  # YES fraction (of valid votes) required
+
+
+def safe_tally_vote(
+    rules: types.ModuleType,
+    yes: int,
+    no: int,
+    players: list,
+    is_transmutation: bool,
+) -> bool:
+    """Tally a proposal with engine-enforced floors that rules.py cannot bypass.
+
+    For both regular and transmutation proposals, the engine enforces:
+      - Minimum total participation (ENGINE_QUORUM_FLOOR; full participation for transmutations)
+      - Minimum YES fraction (ENGINE_THRESHOLD_FLOOR; 100% for transmutations)
+      - yes > 0
+
+    rules.tally_vote may then REJECT a proposal that would otherwise pass
+    (e.g. by requiring a higher threshold), but cannot allow one that fails
+    the engine floors.
+    """
+    total = yes + no
+
+    if is_transmutation:
+        required = max(1, len(players) - 1)  # all non-proposer players must vote
+        if total < required or no > 0 or yes <= 0:
+            return False
+    else:
+        if total < ENGINE_QUORUM_FLOOR or yes <= 0:
+            return False
+        if (yes / total) < ENGINE_THRESHOLD_FLOOR:
+            return False
+
+    # Floors passed — let rules.py impose any additional restrictions.
+    # Default True: if rules.tally_vote is missing/broken, engine floors stand.
+    return bool(call_rule(
+        rules, "tally_vote", yes, no, players, is_transmutation,
+        default=True,
+    ))
+
+
+def safe_next_player(
+    rules: types.ModuleType,
+    current_id: str | None,
+    players: list,
+) -> str | None:
+    """Resolve the next player to take a turn, with validation.
+
+    If rules.next_player returns an ID that isn't in the roster (or any other
+    nonsense), the engine falls back to deterministic round-robin so a bad
+    rule can't freeze the game.
+    """
+    ids = [p["discord_id"] for p in players]
+    if not ids:
+        return None
+
+    def round_robin() -> str:
+        if current_id not in ids:
+            return ids[0]
+        idx = ids.index(current_id)
+        return ids[(idx + 1) % len(ids)]
+
+    candidate = call_rule(rules, "next_player", current_id, players, default=round_robin)
+    if isinstance(candidate, str) and candidate in ids:
+        return candidate
+    log.warning("rules.next_player returned %r (not in roster); falling back to round-robin", candidate)
+    return round_robin()
