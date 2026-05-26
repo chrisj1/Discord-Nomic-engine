@@ -14,6 +14,7 @@ Game lifecycle and player commands.
   /ruleinfo   — show key rule constants
 """
 
+import io
 import logging
 
 import discord
@@ -353,7 +354,7 @@ class GameCog(commands.Cog):
 
     # ── Rules inspection ───────────────────────────────────────────────────────
 
-    @app_commands.command(name="rules", description="Display the current rules.py.")
+    @app_commands.command(name="rules", description="Show the current rules.py and attach it as a file.")
     async def rules(self, interaction: discord.Interaction) -> None:
         try:
             content = self.bot.rules_path.read_text(encoding="utf-8")
@@ -361,11 +362,21 @@ class GameCog(commands.Cog):
             await interaction.response.send_message(f"❌ Could not read rules.py: {exc}", ephemeral=True)
             return
 
-        max_content = 1990
-        if len(content) > max_content:
-            content = content[:max_content] + "\n…(truncated)"
+        # Always attach the full file so players can download and diff against it
+        attachment = discord.File(
+            io.BytesIO(content.encode("utf-8")),
+            filename="rules.py",
+        )
 
-        await interaction.response.send_message(f"```python\n{content}\n```")
+        max_preview = 1900
+        if len(content) > max_preview:
+            preview = content[:max_preview] + "\n…(truncated — full file attached)"
+        else:
+            preview = content
+
+        await interaction.response.send_message(
+            f"```python\n{preview}\n```", file=attachment,
+        )
 
     @app_commands.command(name="ruleinfo", description="Show key rule constants.")
     async def ruleinfo(self, interaction: discord.Interaction) -> None:

@@ -9,6 +9,7 @@
 
 import asyncio
 import datetime
+import io
 import logging
 
 import discord
@@ -294,7 +295,7 @@ class ProposalsCog(commands.Cog):
                     )
                     return
 
-            valid, error, _, transmutations = engine.validate_patch(patch_text, self.bot.rules_path)
+            valid, error, new_content, transmutations = engine.validate_patch(patch_text, self.bot.rules_path)
             if not valid:
                 if len(error) > 1800:
                     error = error[:1800] + "\n…(truncated)"
@@ -337,10 +338,14 @@ class ProposalsCog(commands.Cog):
                 f"requires unanimous YES from all non-proposer players."
             )
 
+        # Attach raw patch + would-be rules.py so voters can review/apply locally
+        attachments = _proposal_files(proposal_id, patch_text, new_content)
+
         message = await interaction.followup.send(
             f"{kind} **#{proposal_id}:** {description}\n"
             f"*By {proposer_name} · poll open for {poll_hours}h*{transmute_note}",
             poll=poll,
+            files=attachments,
         )
         await self.bot.db.set_proposal_poll(
             proposal_id, str(message.id), str(interaction.channel_id)
@@ -388,7 +393,7 @@ class ProposalsCog(commands.Cog):
             await interaction.followup.send("❌ Patch must be valid UTF-8.", ephemeral=True)
             return
 
-        valid, error, _, transmutations = engine.validate_patch(patch_text, self.bot.rules_path)
+        valid, error, new_content, transmutations = engine.validate_patch(patch_text, self.bot.rules_path)
         if not valid:
             if len(error) > 1800:
                 error = error[:1800] + "\n…(truncated)"
@@ -454,11 +459,13 @@ class ProposalsCog(commands.Cog):
             elif was_transmute and not transmutations:
                 kind_change = " (no longer a transmutation)"
 
+            attachments = _proposal_files(proposal_id, patch_text, new_content)
             new_msg = await channel.send(
                 f"✏️ **Proposal #{proposal_id} amended**{kind_change}\n"
                 f"*New summary:* {description}\n"
                 f"*Previous votes have been reset. Poll runs for {remaining_h}h.*",
                 poll=poll,
+                files=attachments,
             )
 
             await self.bot.db.update_proposal_patch(
@@ -614,8 +621,32 @@ class ProposalsCog(commands.Cog):
         body = row["patch_text"]
         max_body = 1900 - len(header)
         if len(body) > max_body:
-            body = body[:max_body] + "\n…(truncated)"
-        await interaction.response.send_message(f"{header}```diff\n{body}\n```")
+            body = body[:max_body] + "\n…(truncated — full patch attached)"
+
+        patch_file = discord.File(
+            io.BytesIO(row["patch_text"].encode("utf-8")),
+            filename=f"proposal-{row['id']}.patch",
+        )
+        await interaction.response.send_message(
+            f"{header}```diff\n{body}\n```",
+            file=patch_file,
+        )
+
+
+def _proposal_files(proposal_id: int, patch_text: str, new_rules: str) -> list[discord.File]:
+    """Build the two attachments shown alongside every poll: the raw .patch and
+    the rules.py that would result if the proposal passes. Voters can download
+    either to review locally before voting."""
+    return [
+        discord.File(
+            io.BytesIO(patch_text.encode("utf-8")),
+            filename=f"proposal-{proposal_id}.patch",
+        ),
+        discord.File(
+            io.BytesIO(new_rules.encode("utf-8")),
+            filename=f"rules-if-passed-{proposal_id}.py",
+        ),
+    ]
 
 
 async def setup(bot: commands.Bot) -> None:
