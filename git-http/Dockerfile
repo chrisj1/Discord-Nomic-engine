@@ -2,7 +2,8 @@ FROM alpine:3.20
 
 # git provides git-http-backend at /usr/libexec/git-core/git-http-backend.
 # fcgiwrap runs the CGI; nginx terminates HTTP and proxies to it via FastCGI.
-RUN apk add --no-cache git nginx fcgiwrap \
+# Alpine 3.20 ships git-http-backend in the git-daemon subpackage, not git.
+RUN apk add --no-cache git git-daemon nginx fcgiwrap \
     # Bind-mounted rules dir comes from a different host UID; trust it so
     # git won't reject the working tree as "dubious ownership". Read-only
     # mount means this can't be abused to write.
