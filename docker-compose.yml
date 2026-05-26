@@ -18,8 +18,9 @@ services:
   # Players can `git clone git://<your-nas-host>:9418/nomic-rules` and
   # `git pull` to always have the current rules to diff against.
   rules-git:
-    image: alpine/git:latest
-    entrypoint: ["git"]
+    build:
+      context: .
+      dockerfile: Dockerfile.git-daemon
     command:
       - daemon
       - --reuseaddr
