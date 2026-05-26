@@ -302,6 +302,13 @@ class ProposalsCog(commands.Cog):
                 await interaction.followup.send(f"❌ **Invalid patch:**\n```\n{error}\n```", ephemeral=True)
                 return
 
+            ok, rule_err = engine.is_patch_valid(rules, patch_text, description, proposer_id, players)
+            if not ok:
+                await interaction.followup.send(
+                    f"❌ **Rejected by game rules:** {rule_err}", ephemeral=True
+                )
+                return
+
             duration_hours = engine.get_rule(rules, "PROPOSAL_DURATION_HOURS", 48)
             proposer_name = interaction.user.display_name
             proposal_id = await self.bot.db.create_proposal(
@@ -404,6 +411,16 @@ class ProposalsCog(commands.Cog):
             if len(error) > 1800:
                 error = error[:1800] + "\n…(truncated)"
             await interaction.followup.send(f"❌ **Invalid patch:**\n```\n{error}\n```", ephemeral=True)
+            return
+
+        players = await self.bot.db.get_game_players(row["game_id"])
+        ok, rule_err = engine.is_patch_valid(
+            rules, patch_text, description, row["proposer_id"], players
+        )
+        if not ok:
+            await interaction.followup.send(
+                f"❌ **Rejected by game rules:** {rule_err}", ephemeral=True
+            )
             return
 
         # Hold the tally lock so the poll_checker can't tally this proposal

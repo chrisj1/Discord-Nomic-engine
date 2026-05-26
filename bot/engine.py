@@ -488,6 +488,31 @@ def safe_tally_vote(
     ))
 
 
+def is_patch_valid(
+    rules: types.ModuleType,
+    patch_text: str,
+    description: str,
+    proposer_id: str,
+    players: list,
+) -> tuple[bool, str]:
+    """Run rules.is_valid_patch (mutable, player-defined) on top of the engine's
+    mandatory checks. Returns (True, "") on accept, (False, msg) on reject.
+
+    A True return means accept. A string return rejects with that string as
+    the reason. Anything else falsy rejects with a generic message.
+    """
+    result = call_rule(
+        rules, "is_valid_patch",
+        patch_text, description, proposer_id, players,
+        default=True,
+    )
+    if result is True:
+        return True, ""
+    if isinstance(result, str) and result:
+        return False, result
+    return False, "Rejected by rules.is_valid_patch"
+
+
 def safe_next_player(
     rules: types.ModuleType,
     current_id: str | None,
