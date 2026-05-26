@@ -4,7 +4,7 @@
 /withdraw  — withdraw your open proposal
 /proposals — list proposals in the current game
 /proposal  — view a single proposal
-/tally     — proposer (or admin) closes a poll early
+/tally     — admin closes a poll early
 
 Polls also auto-close (via on_raw_poll_vote_add) as soon as every eligible
 voter has cast a vote, so games don't have to wait out the full timer.
@@ -666,10 +666,18 @@ class ProposalsCog(commands.Cog):
 
     # ── /tally ─────────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="tally", description="Close your own poll early (proposer or admin only).")
+    @app_commands.command(name="tally", description="Close a poll early (admin only).")
     @app_commands.describe(proposal_id="The proposal number to tally.")
     async def tally(self, interaction: discord.Interaction, proposal_id: int) -> None:
         await interaction.response.defer(thinking=True)
+
+        if not _is_admin(interaction):
+            await interaction.followup.send(
+                "❌ Only an admin (Manage Server) can tally a proposal early. "
+                "Polls also auto-close once every eligible voter has voted.",
+                ephemeral=True,
+            )
+            return
 
         row = await self.bot.db.get_proposal(proposal_id)
         if row is None:
@@ -682,13 +690,6 @@ class ProposalsCog(commands.Cog):
             return
         if row["poll_message_id"] is None:
             await interaction.followup.send("❌ Proposal has no poll yet.", ephemeral=True)
-            return
-
-        if str(interaction.user.id) != row["proposer_id"] and not _is_admin(interaction):
-            await interaction.followup.send(
-                "❌ Only the proposer or an admin can tally this proposal early.",
-                ephemeral=True,
-            )
             return
 
         result = await self._tally(row)
