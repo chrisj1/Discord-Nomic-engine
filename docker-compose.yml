@@ -20,27 +20,18 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # Read-only git server that exposes the live rules.py repo.
-  # Players can `git clone git://<your-nas-host>:9418/nomic-rules` and
-  # `git pull` to always have the current rules to diff against.
-  rules-git:
+  # Read-only smart-HTTP git server. Players clone via
+  # `git clone https://<your-host>/nomic-rules`. Designed to sit behind
+  # cloudflared (or any HTTP reverse proxy) for external access — git-http
+  # works over standard HTTPS, unlike the raw-TCP `git://` daemon protocol.
+  rules-http:
     build:
-      context: .
-      dockerfile: Dockerfile.git-daemon
-    command:
-      - daemon
-      - --reuseaddr
-      - --base-path=/srv/git
-      - --export-all
-      - --port=9418
-      - --listen=0.0.0.0
-      - --informative-errors
-      - --verbose
+      context: ./git-http
     volumes:
-      # Same bind-mount as the bot, read-only — daemon never writes.
+      # Same bind-mount as the bot, read-only — git-http-backend never writes.
       - ${RULES_REPO_PATH:-../nomic-rules}:/srv/git/nomic-rules:ro
     ports:
-      - "9418:9418"
+      - "8418:80"
     restart: unless-stopped
     cap_drop:
       - ALL
