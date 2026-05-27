@@ -53,10 +53,22 @@ class GameCog(commands.Cog):
             )
             return
 
+        # Network call + git reset — defer so we don't hit the 3s interaction timeout.
+        await interaction.response.defer(thinking=True)
+
+        ok, err = engine.reset_rules_to_base(self.bot.rules_path)
+        if not ok:
+            await interaction.followup.send(
+                f"❌ Couldn't reset rules to base: {err}\nGame not created.",
+                ephemeral=True,
+            )
+            return
+        self.bot.rules = engine.load_rules(self.bot.rules_path)
+
         game_id = await self.bot.db.create_game()
-        await interaction.response.send_message(
-            f"🎲 **Game #{game_id}** opened. Use `/join` to enter, then "
-            f"an admin runs `/startgame` to begin."
+        await interaction.followup.send(
+            f"🎲 **Game #{game_id}** opened, rules reset to base. Use `/join` to enter, "
+            f"then an admin runs `/startgame` to begin."
         )
 
     @app_commands.command(name="startgame", description="(admin) Close the roster and begin play.")
@@ -265,8 +277,10 @@ class GameCog(commands.Cog):
         embed.add_field(
             name="1️⃣ Joining a game",
             value=(
-                "An admin opens a game with `/newgame`. You `/join` to enter the roster, "
-                "then an admin runs `/startgame` to close the roster and begin play."
+                "An admin opens a game with `/newgame`. **Each new game resets `rules.py` "
+                "to the canonical base** (origin/main), so prior games' accepted "
+                "proposals don't carry over. You `/join` to enter the roster, then "
+                "an admin runs `/startgame` to close the roster and begin play."
             ),
             inline=False,
         )

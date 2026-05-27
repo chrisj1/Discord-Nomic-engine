@@ -412,6 +412,40 @@ def apply_patch(patch_text: str, rules_path: Path, proposal_id: int) -> tuple[bo
     return True, ""
 
 
+# ── Base-rules reset ──────────────────────────────────────────────────────────
+
+def reset_rules_to_base(rules_path: Path) -> tuple[bool, str]:
+    """Discard any in-game commits in the rules repo and snap back to
+    origin/main. Used by /newgame so each new game starts from the
+    canonical base rules rather than carrying forward the previous game's
+    accepted proposals.
+
+    Returns (True, "") on success, (False, error_message) on failure.
+    """
+    rules_dir = rules_path.parent
+    try:
+        fetch = subprocess.run(
+            ["git", "fetch", "origin", "main"],
+            cwd=rules_dir, capture_output=True, text=True, timeout=30,
+        )
+        if fetch.returncode != 0:
+            return False, f"git fetch failed: {fetch.stderr.strip()}"
+
+        reset = subprocess.run(
+            ["git", "reset", "--hard", "origin/main"],
+            cwd=rules_dir, capture_output=True, text=True, timeout=10,
+        )
+        if reset.returncode != 0:
+            return False, f"git reset failed: {reset.stderr.strip()}"
+
+        log.info("Reset rules.py to origin/main: %s", reset.stdout.strip())
+        return True, ""
+    except subprocess.TimeoutExpired as exc:
+        return False, f"git operation timed out: {exc}"
+    except Exception as exc:
+        return False, f"reset failed: {exc}"
+
+
 # ── Rule loading ──────────────────────────────────────────────────────────────
 
 def load_rules(rules_path: Path) -> types.ModuleType:
